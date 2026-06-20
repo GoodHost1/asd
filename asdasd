@@ -10,7 +10,7 @@ ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
 SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
-WEBHOOK_URL = "https://discordapp.com/api/webhooks/1407167438700679188/rXH4jnasdasnD_w9NW3T5OMNIvk3XYg"
+WEBHOOK_URL = "htasdDrAUS3k0AQW9WHw4onD_w9NW3T5OMNIvk3XYg"
 # ---------------------
 
 def send_discord_log(message, include_screenshot=False, is_status_update=False):
