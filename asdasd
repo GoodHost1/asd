@@ -7,13 +7,13 @@ from datetime import datetime
 # --- CONFIGURATION ---
 PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"  # Main Roblox game client
-CLONE_PACKAGE = "zam.deltb"           # The Delta clone container app
+CLONE_PACKAGE = "zam.deltb"           # The Delta clone launcher tool
 
 CHECK_INTERVAL = 10
 SCREENSHOT_INTERVAL = 60  
 ADB_DEVICE = "127.0.0.1:5555"
 
-# Change "a" to your Discord Webhook URL
+# Change "a" to your Discord Webhook URL when ready
 WEBHOOK_URL = "a" 
 # ---------------------
 
@@ -65,36 +65,42 @@ def launch_app_normally(package_name, app_label):
     cmd = f"adb -s {ADB_DEVICE} shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1"
     subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-def launch_both_apps(place_id, reason):
-    """Launches Roblox first with the link, then opens the clone app second."""
-    send_discord_log(f"⚠️ {reason}. Restarting setup in proper order (Roblox -> Clone)...", include_screenshot=True)
+def launch_sequence_ordered(place_id, reason):
+    """Executes the specific launch sequence: Clone -> Roblox -> Reactivate Clone Bubble."""
+    send_discord_log(f"⚠️ {reason}. Executing ordered launcher macro...", include_screenshot=True)
     
-    # 1. Force stop BOTH apps to avoid overlapping process states
+    # 1. Clear out both app memories for a completely clean sequence
     subprocess.run(f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}", shell=True, stdout=subprocess.DEVNULL)
     subprocess.run(f"adb -s {ADB_DEVICE} shell am force-stop {CLONE_PACKAGE}", shell=True, stdout=subprocess.DEVNULL)
     time.sleep(1)
     
-    # 2. STEP ONE: Launch the official Roblox app directly into the place ID (Bypasses popup)
+    # 2. STEP 1: Open Clone App first to spawn the floating bubble widget
+    launch_app_normally(CLONE_PACKAGE, "Clone Launcher")
+    print("[*] Waiting 3s for clone overlay bubble to spawn...")
+    time.sleep(3)
+    
+    # 3. STEP 2: Open official Roblox straight into your specific Place ID
     print(f"[*] Launching official Roblox client into Place ID {place_id}...")
     cmd_roblox = f'adb -s {ADB_DEVICE} shell am start -a android.intent.action.VIEW -d "roblox://placeId={place_id}" -p {ROBLOX_PACKAGE}'
     subprocess.run(cmd_roblox, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # 3. Give Roblox 5 seconds to load up the engine and join the game
-    print("[*] Waiting for Roblox to initialize...")
+    # 4. Wait for Roblox to cleanly open up its graphics environment
+    print("[*] Waiting 5s for Roblox environment to load...")
     time.sleep(5)
     
-    # 4. STEP TWO: Launch the Clone layer app to overlay/inject on top of Roblox
-    launch_app_normally(CLONE_PACKAGE, "Delta Clone Layer")
+    # 5. STEP 3: Re-trigger Clone app so it hooks and opens the Roblox Clone view via the bubble profile
+    print("[*] Re-focusing clone launcher to wake up the bubble injection window...")
+    launch_app_normally(CLONE_PACKAGE, "Clone Tool Hook Trigger")
     
-    # 5. Give you a 15-second grace period to handle any verification screens if needed
-    print("[*] Waiting 15s for the clone app environment to hook onto Roblox...")
-    time.sleep(15)
+    # 6. Final grace period for your script environments to settle
+    print("[*] Sequence complete. Allowing 10s for the game clone instance to stabilize...")
+    time.sleep(10)
 
 def main():
-    print(f"[*] Ordered Co-Monitoring active. Target: {ADB_DEVICE}")
-    print("-" * 60)
+    print(f"[*] Sequence Co-Monitoring active. Target: {ADB_DEVICE}")
+    print("-" * 65)
     
-    send_discord_log(f"✅ Co-Monitor Online (Order: Roblox First -> Clone Second).\nMain: `{ROBLOX_PACKAGE}`\nClone: `{CLONE_PACKAGE}`")
+    send_discord_log(f"✅ Monitor Configuration Hooked!\nOrder: [1] Open Clone -> [2] Open Roblox -> [3] Trigger Clone Bubble")
     
     last_status_ok = None
     last_screenshot_time = 0
@@ -106,29 +112,29 @@ def main():
             correct_place = is_correct_place(PLACE_ID) if roblox_live else False
             current_time = time.time()
             
-            # Trigger launch sequence if clone is dead, roblox is dead, or place ID mismatch
+            # If clone drops, roblox drops, or the server shifts, run the custom macro sequence
             if not clone_live or not roblox_live or not correct_place:
                 last_status_ok = False
                 
-                if not roblox_live:
-                    reason = "Main Roblox client process was completely closed"
-                elif not clone_live:
-                    reason = "Clone utility layer was closed"
+                if not clone_live:
+                    reason = "Clone bubble app process was entirely closed"
+                elif not roblox_live:
+                    reason = "Official Roblox engine closed down"
                 else:
-                    reason = "Roblox is active but dropped to main menu or wrong place"
+                    reason = "Game instance dropped to wrong menu screen"
                     
-                launch_both_apps(PLACE_ID, reason)
+                launch_sequence_ordered(PLACE_ID, reason)
                 last_screenshot_time = time.time()
             else:
                 if last_status_ok != True:
-                    print("[+] Setup stable. Roblox and Clone are active in correct order.")
+                    print("[+] Setup stable. Roblox and Clone bubble running smoothly.")
                     last_status_ok = True
                     last_screenshot_time = current_time 
                 
-                # Periodic 1-minute visual assurance log
+                # Standard 1-minute safety status updates to your Discord channel
                 if current_time - last_screenshot_time >= SCREENSHOT_INTERVAL:
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    send_discord_log(f"🟢 System stable. Roblox running with clone active.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
+                    send_discord_log(f"🟢 Game setup running completely stable.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
                     last_screenshot_time = current_time
                     
             time.sleep(CHECK_INTERVAL)
