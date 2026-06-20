@@ -2,20 +2,23 @@ import subprocess
 import time
 import os
 import requests
+from datetime import datetime
 
 # --- CONFIGURATION ---
 PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
+SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
-WEBHOOK_URL = "a"
+WEBHOOK_URL = "https://discordapp.com/api/webhooks/1407167438700679188/rXH4jnasdasnD_w9NW3T5OMNIvk3XYg"
 # ---------------------
 
-def send_discord_log(message, include_screenshot=False):
+def send_discord_log(message, include_screenshot=False, is_status_update=False):
     """Sends a text log and an optional screenshot to the Discord Webhook."""
     print(f"[Discord Log] {message}")
     
-    payload = {"content": f"⚙️ **Roblox Monitor Alert:**\n{message}"}
+    header = "📸 **Roblox Live Status Update:**" if is_status_update else "⚙️ **Roblox Monitor Alert:**"
+    payload = {"content": f"{header}\n{message}"}
     
     try:
         if include_screenshot:
@@ -57,7 +60,6 @@ def is_correct_place(place_id):
         return False
 
 def launch_roblox(place_id, reason):
-    # Notify Discord that a relaunch scenario triggered
     send_discord_log(f"⚠️ {reason}. Forcing relaunch to Place ID: `{place_id}`...", include_screenshot=True)
     
     # Force close current instance
@@ -77,25 +79,38 @@ def main():
     print(f"[*] Monitoring active. Target Device: {ADB_DEVICE}")
     send_discord_log(f"✅ Monitor Started Successfully!\nTargeting Game Place ID: `{PLACE_ID}`")
     
-    last_status_ok = None  # Tracking state changes to prevent spamming Discord
+    last_status_ok = None  # Tracking state changes to prevent spamming alerts
+    last_screenshot_time = 0  # Timestamp tracking for the 1-minute capture rule
     
     while True:
         try:
             running = is_roblox_running()
             correct_place = is_correct_place(PLACE_ID) if running else False
+            current_time = time.time()
             
             if running and correct_place:
                 if last_status_ok != True:
                     print("[+] Roblox is running the correct game.")
                     last_status_ok = True
+                    # Reset the capture timer on fresh successful entry so it snaps one soon
+                    last_screenshot_time = current_time 
+                
+                # Check if 1 minute (60 seconds) has passed since the last screenshot
+                if current_time - last_screenshot_time >= SCREENSHOT_INTERVAL:
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    send_discord_log(f"🟢 Game running smoothly.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
+                    last_screenshot_time = current_time
+                    
             elif running and not correct_place:
                 last_status_ok = False
                 launch_roblox(PLACE_ID, "Roblox is active but in the WRONG place or Main Menu")
-                time.sleep(5)  # Add extra cooldown buffer for application initialization
+                time.sleep(5)  # Cooldown buffer
+                last_screenshot_time = time.time() # Reset timer after relaunch
             else:
                 last_status_ok = False
                 launch_roblox(PLACE_ID, "Roblox process was completely CLOSED")
                 time.sleep(5)
+                last_screenshot_time = time.time() # Reset timer after relaunch
                 
             time.sleep(CHECK_INTERVAL)
         except KeyboardInterrupt:
