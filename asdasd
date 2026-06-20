@@ -83,8 +83,12 @@ def launch_both_apps(place_id, reason):
     print("[*] Waiting for Roblox to initialize...")
     time.sleep(5)
     
-    # 4. STEP TWO: Launch the Clone layer app to overlay on top of Roblox
+    # 4. STEP TWO: Launch the Clone layer app to overlay/inject on top of Roblox
     launch_app_normally(CLONE_PACKAGE, "Delta Clone Layer")
+    
+    # 5. Give you a 15-second grace period to handle any verification screens if needed
+    print("[*] Waiting 15s for the clone app environment to hook onto Roblox...")
+    time.sleep(15)
 
 def main():
     print(f"[*] Ordered Co-Monitoring active. Target: {ADB_DEVICE}")
@@ -114,7 +118,6 @@ def main():
                     reason = "Roblox is active but dropped to main menu or wrong place"
                     
                 launch_both_apps(PLACE_ID, reason)
-                time.sleep(10)  # Wait for the initialization sequence to settle
                 last_screenshot_time = time.time()
             else:
                 if last_status_ok != True:
