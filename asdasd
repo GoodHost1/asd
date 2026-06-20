@@ -66,35 +66,31 @@ def launch_app_normally(package_name, app_label):
     subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def launch_sequence_ordered(place_id, reason):
-    """Executes the specific launch sequence: Clone -> Roblox -> Reactivate Clone Bubble."""
-    send_discord_log(f"⚠️ {reason}. Executing ordered launcher macro...", include_screenshot=True)
+    """Executes the specific launch sequence: Clone First -> Then Roblox."""
+    send_discord_log(f"⚠️ {reason}. Executing ordered launcher macro (Clone -> Roblox)...", include_screenshot=True)
     
-    # 1. Clear out both app memories for a completely clean sequence
+    # 1. Clear out both app memories to completely clean up stuck sessions
     subprocess.run(f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}", shell=True, stdout=subprocess.DEVNULL)
     subprocess.run(f"adb -s {ADB_DEVICE} shell am force-stop {CLONE_PACKAGE}", shell=True, stdout=subprocess.DEVNULL)
     time.sleep(1)
     
-    # 2. STEP 1: Open Clone App first to spawn the floating bubble widget
-    launch_app_normally(CLONE_PACKAGE, "Clone Launcher")
-    print("[*] Waiting 3s for clone overlay bubble to spawn...")
-    time.sleep(3)
+    # 2. STEP 1: Force boot the Clone UI layer component directly
+    print(f"[*] Launching clone app ({CLONE_PACKAGE}) first...")
+    cmd_clone = f"adb -s {ADB_DEVICE} shell am start -n {CLONE_PACKAGE}/com.multi.clone.MainActivity || adb -s {ADB_DEVICE} shell monkey -p {CLONE_PACKAGE} 1"
+    subprocess.run(cmd_clone, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # 3. STEP 2: Open official Roblox straight into your specific Place ID
+    # 3. Wait for the clone launcher to open and prepare its bubble overlay
+    print("[*] Waiting 4s for clone app to initialize...")
+    time.sleep(4)
+    
+    # 4. STEP 2: Open the official Roblox app directly into your specific Place ID
     print(f"[*] Launching official Roblox client into Place ID {place_id}...")
     cmd_roblox = f'adb -s {ADB_DEVICE} shell am start -a android.intent.action.VIEW -d "roblox://placeId={place_id}" -p {ROBLOX_PACKAGE}'
     subprocess.run(cmd_roblox, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    # 4. Wait for Roblox to cleanly open up its graphics environment
-    print("[*] Waiting 5s for Roblox environment to load...")
-    time.sleep(5)
-    
-    # 5. STEP 3: Re-trigger Clone app so it hooks and opens the Roblox Clone view via the bubble profile
-    print("[*] Re-focusing clone launcher to wake up the bubble injection window...")
-    launch_app_normally(CLONE_PACKAGE, "Clone Tool Hook Trigger")
-    
-    # 6. Final grace period for your script environments to settle
-    print("[*] Sequence complete. Allowing 10s for the game clone instance to stabilize...")
-    time.sleep(10)
+    # 5. Final grace period for your script environments to settle and inject
+    print("[*] Sequence complete. Allowing 12s for the game clone instance to stabilize...")
+    time.sleep(12)
 
 def main():
     print(f"[*] Sequence Co-Monitoring active. Target: {ADB_DEVICE}")
