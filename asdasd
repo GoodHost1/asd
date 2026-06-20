@@ -8,7 +8,7 @@ PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
 ADB_DEVICE = "127.0.0.1:5555"
-WEBHOOK_URL = "https://discordapp.com/api/webhooks/1407167438700679188/rXH4jnn70W9YFuVfK13EYveBRt8nxXhDrAUS3k0AQW9WHw4onD_w9NW3T5OMNIvk3XYg"
+WEBHOOK_URL = "a"
 # ---------------------
 
 def send_discord_log(message, include_screenshot=False):
