@@ -5,103 +5,116 @@ import requests
 from datetime import datetime
 
 # --- CONFIGURATION ---
-ROBLOX_PACKAGE = "com.roblox.client"  # Main Roblox game client
-CLONE_PACKAGE = "zam.deltb"           # The Delta clone launcher tool
-
+PLACE_ID = "97598239454123"
+ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
-SCREENSHOT_INTERVAL = 60  
+SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
-
-# Change "a" to your Discord Webhook URL when ready
-WEBHOOK_URL = "a" 
+WEBHOOK_URL = "https://discordapp.com/api/webhooks/1407167438700679188/rXH4jnn70W9YFuVfK13EYveBRt8nxXhDrAUS3k0AQW9WHw4onD_w9NW3T5OMNIvk3XYg"
 # ---------------------
 
 def send_discord_log(message, include_screenshot=False, is_status_update=False):
     """Sends a text log and an optional screenshot to the Discord Webhook."""
     print(f"[Discord Log] {message}")
     
-    if WEBHOOK_URL == "a" or not WEBHOOK_URL.startswith("http"):
-        return
-
-    header = "📸 **Roblox Keep-Alive Status:**" if is_status_update else "⚙️ **Roblox Keep-Alive Alert:**"
+    header = "📸 **Roblox Live Status Update:**" if is_status_update else "⚙️ **Roblox Monitor Alert:**"
     payload = {"content": f"{header}\n{message}"}
     
     try:
         if include_screenshot:
+            # 1. Take screenshot on Android device
             subprocess.run(f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/roblox_snap.png", shell=True)
+            # 2. Pull screenshot file into Termux local directory
             subprocess.run(f"adb -s {ADB_DEVICE} pull /sdcard/roblox_snap.png ./roblox_snap.png", shell=True, stdout=subprocess.DEVNULL)
             
+            # 3. Send payload with file attachment
             if os.path.exists("./roblox_snap.png"):
                 with open("./roblox_snap.png", "rb") as f:
                     files = {"file": ("screenshot.png", f, "image/png")}
                     requests.post(WEBHOOK_URL, data=payload, files=files)
+                # Clean up local file copy
                 os.remove("./roblox_snap.png")
                 return
+                
+        # Send text-only if screenshot failed or wasn't requested
         requests.post(WEBHOOK_URL, json=payload)
     except Exception as e:
         print(f"[!] Failed to send webhook payload: {e}")
 
-def is_app_running(package_name):
+def is_roblox_running():
     try:
-        cmd = f"adb -s {ADB_DEVICE} shell pidof {package_name}"
+        cmd = f"adb -s {ADB_DEVICE} shell pidof {ROBLOX_PACKAGE}"
         result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return bool(result.stdout.strip())
     except Exception:
         return False
 
-def launch_app_normally(package_name, app_label):
-    print(f"[*] Bringing back {app_label} ({package_name})...")
-    # Tries direct main activity launch first, falls back to monkey if needed
-    cmd = f"adb -s {ADB_DEVICE} shell am start -n {package_name}/com.multi.clone.MainActivity || adb -s {ADB_DEVICE} shell monkey -p {package_name} 1"
-    subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def is_correct_place(place_id):
+    try:
+        cmd = f"adb -s {ADB_DEVICE} shell dumpsys activity activities"
+        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if f"placeId={place_id}" in result.stdout or f"games/{place_id}" in result.stdout:
+            return True
+        return False
+    except Exception:
+        return False
+
+def launch_roblox(place_id, reason):
+    send_discord_log(f"⚠️ {reason}. Forcing relaunch to Place ID: `{place_id}`...", include_screenshot=True)
+    
+    # Force close current instance
+    subprocess.run(f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}", shell=True, stdout=subprocess.DEVNULL)
+    time.sleep(1)
+    
+    # Launch standard activity base
+    cmd1 = f"adb -s {ADB_DEVICE} shell monkey -p {ROBLOX_PACKAGE} -c android.intent.category.LAUNCHER 1"
+    subprocess.run(cmd1, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(3)
+    
+    # Push target game deep link intent
+    cmd2 = f'adb -s {ADB_DEVICE} shell am start -a android.intent.action.VIEW -d "roblox://placeId={place_id}"'
+    subprocess.run(cmd2, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def main():
-    print(f"[*] Keep-Alive Monitoring active targeting {ADB_DEVICE}.")
-    print(f"[*] Main: {ROBLOX_PACKAGE} | Clone: {CLONE_PACKAGE}")
-    print("-" * 65)
+    print(f"[*] Monitoring active. Target Device: {ADB_DEVICE}")
+    send_discord_log(f"✅ Monitor Started Successfully!\nTargeting Game Place ID: `{PLACE_ID}`")
     
-    send_discord_log(f"✅ Keep-Alive Guardian Online!\nMonitoring: `{ROBLOX_PACKAGE}` and `{CLONE_PACKAGE}`")
-    
-    last_status_ok = None
-    last_screenshot_time = time.time()
+    last_status_ok = None  # Tracking state changes to prevent spamming alerts
+    last_screenshot_time = 0  # Timestamp tracking for the 1-minute capture rule
     
     while True:
         try:
-            roblox_live = is_app_running(ROBLOX_PACKAGE)
-            clone_live = is_app_running(CLONE_PACKAGE)
+            running = is_roblox_running()
+            correct_place = is_correct_place(PLACE_ID) if running else False
             current_time = time.time()
             
-            # --- Check Clone Package ---
-            if not clone_live:
-                print(f"[!] {CLONE_PACKAGE} dropped! Reopening...")
-                send_discord_log(f"⚠️ `{CLONE_PACKAGE}` was found closed. Reviving application.")
-                launch_app_normally(CLONE_PACKAGE, "Clone Launcher")
-                last_status_ok = False
-                time.sleep(3)
-                
-            # --- Check Roblox Package ---
-            if not roblox_live:
-                print(f"[!] {ROBLOX_PACKAGE} dropped! Reopening...")
-                send_discord_log(f"⚠️ `{ROBLOX_PACKAGE}` was found closed. Reviving application.")
-                launch_app_normally(ROBLOX_PACKAGE, "Roblox Client")
-                last_status_ok = False
-                time.sleep(3)
-
-            # --- Status Updates ---
-            if roblox_live and clone_live:
+            if running and correct_place:
                 if last_status_ok != True:
-                    print("[+] Both apps are currently running fine.")
+                    print("[+] Roblox is running the correct game.")
                     last_status_ok = True
+                    # Reset the capture timer on fresh successful entry so it snaps one soon
+                    last_screenshot_time = current_time 
                 
-                # Send the scheduled 1-minute visual update
+                # Check if 1 minute (60 seconds) has passed since the last screenshot
                 if current_time - last_screenshot_time >= SCREENSHOT_INTERVAL:
                     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    send_discord_log(f"🟢 Both applications are safely kept alive.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
+                    send_discord_log(f"🟢 Game running smoothly.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
                     last_screenshot_time = current_time
                     
+            elif running and not correct_place:
+                last_status_ok = False
+                launch_roblox(PLACE_ID, "Roblox is active but in the WRONG place or Main Menu")
+                time.sleep(5)  # Cooldown buffer
+                last_screenshot_time = time.time() # Reset timer after relaunch
+            else:
+                last_status_ok = False
+                launch_roblox(PLACE_ID, "Roblox process was completely CLOSED")
+                time.sleep(5)
+                last_screenshot_time = time.time() # Reset timer after relaunch
+                
             time.sleep(CHECK_INTERVAL)
         except KeyboardInterrupt:
-            send_discord_log("❌ Keep-Alive Monitor stopped by user.")
+            send_discord_log("❌ Monitor explicitly stopped by user inside Termux.")
             break
 
 if __name__ == "__main__":
