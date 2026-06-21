@@ -3,8 +3,7 @@ import time
 import os
 import requests
 from datetime import datetime
-import cv2
-import numpy as np
+
 
 # --- CONFIGURATION ---
 PLACE_ID = "97598239454123"
@@ -15,47 +14,48 @@ ADB_DEVICE = "127.0.0.1:5555"
 WEBHOOK_URL = "a"
 # ---------------------
 
-def image_exists(template_path="./image.png", threshold=0.8):
+from PIL import Image
+import pytesseract
+
+def speed_hub_visible():
     """
-    Returns True if target image is visible on screen.
+    Returns True if 'Speed Hub' text is detected on screen.
     """
 
     try:
-        # Capture screen
+        # Take screenshot
         subprocess.run(
             f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/check.png",
             shell=True,
-            stdout=subprocess.DEVNULL
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
 
+        # Pull screenshot
         subprocess.run(
             f"adb -s {ADB_DEVICE} pull /sdcard/check.png ./check.png",
             shell=True,
-            stdout=subprocess.DEVNULL
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
         )
 
-        screen = cv2.imread("./check.png")
-        template = cv2.imread(template_path)
-
-        if screen is None or template is None:
+        if not os.path.exists("./check.png"):
             return False
 
-        result = cv2.matchTemplate(
-            screen,
-            template,
-            cv2.TM_CCOEFF_NORMED
-        )
+        img = Image.open("./check.png")
 
-        max_val = cv2.minMaxLoc(result)[1]
+        text = pytesseract.image_to_string(img)
 
         os.remove("./check.png")
 
-        print(f"[Image Detection] Confidence: {max_val:.3f}")
+        text = text.lower()
 
-        return max_val >= threshold
+        print(f"[OCR] Found text:\n{text}")
+
+        return "speed hub" in text
 
     except Exception as e:
-        print(f"[Image Detection Error] {e}")
+        print(f"[OCR Error] {e}")
         return False
 
 def send_discord_log(message, include_screenshot=False, is_status_update=False):
@@ -132,15 +132,15 @@ def main():
 running = is_roblox_running()
 correct_place = is_correct_place(PLACE_ID) if running else False
 
-image_found = image_exists("./target.png")
+speedhub_found = speed_hub_visible()
 
-if running and correct_place and image_found:
-    print("[+] Client running correctly.")
+if running and correct_place and speedhub_found:
+    print("[+] Roblox running normally.")
 
-elif running and not image_found:
+elif running and correct_place and not speedhub_found:
     launch_roblox(
         PLACE_ID,
-        "Required image not detected on screen"
+        "Speed Hub text not detected"
     )
     time.sleep(5)
 
