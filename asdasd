@@ -3,6 +3,8 @@ import time
 import os
 import requests
 from datetime import datetime
+import cv2
+import numpy as np
 
 # --- CONFIGURATION ---
 PLACE_ID = "97598239454123"
@@ -10,8 +12,51 @@ ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
 SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
-WEBHOOK_URL = "https://discordapp.com/api/webhooks/1407167438700679188/rXH4jnn70W9YFuVfK13EYveBRt8nxXhDrAUS3k0AQW9WHw4onD_w9NW3T5OMNIvk3XYg"
+WEBHOOK_URL = "a"
 # ---------------------
+
+def image_exists(template_path="./target.png", threshold=0.8):
+    """
+    Returns True if target image is visible on screen.
+    """
+
+    try:
+        # Capture screen
+        subprocess.run(
+            f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/check.png",
+            shell=True,
+            stdout=subprocess.DEVNULL
+        )
+
+        subprocess.run(
+            f"adb -s {ADB_DEVICE} pull /sdcard/check.png ./check.png",
+            shell=True,
+            stdout=subprocess.DEVNULL
+        )
+
+        screen = cv2.imread("./check.png")
+        template = cv2.imread(template_path)
+
+        if screen is None or template is None:
+            return False
+
+        result = cv2.matchTemplate(
+            screen,
+            template,
+            cv2.TM_CCOEFF_NORMED
+        )
+
+        max_val = cv2.minMaxLoc(result)[1]
+
+        os.remove("./check.png")
+
+        print(f"[Image Detection] Confidence: {max_val:.3f}")
+
+        return max_val >= threshold
+
+    except Exception as e:
+        print(f"[Image Detection Error] {e}")
+        return False
 
 def send_discord_log(message, include_screenshot=False, is_status_update=False):
     """Sends a text log and an optional screenshot to the Discord Webhook."""
@@ -84,32 +129,34 @@ def main():
     
     while True:
         try:
-            running = is_roblox_running()
-            correct_place = is_correct_place(PLACE_ID) if running else False
-            current_time = time.time()
-            
-            if running and correct_place:
-                if last_status_ok != True:
-                    print("[+] Roblox is running the correct game.")
-                    last_status_ok = True
-                    # Reset the capture timer on fresh successful entry so it snaps one soon
-                    last_screenshot_time = current_time 
-                
-                # Check if 1 minute (60 seconds) has passed since the last screenshot
-                if current_time - last_screenshot_time >= SCREENSHOT_INTERVAL:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    send_discord_log(f"🟢 Game running smoothly.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
-                    last_screenshot_time = current_time
-                    
-            elif running and not correct_place:
-                last_status_ok = False
-                launch_roblox(PLACE_ID, "Roblox is active but in the WRONG place or Main Menu")
-                time.sleep(5)  # Cooldown buffer
-                last_screenshot_time = time.time() # Reset timer after relaunch
-            else:
-                last_status_ok = False
-                launch_roblox(PLACE_ID, "Roblox process was completely CLOSED")
-                time.sleep(5)
+running = is_roblox_running()
+correct_place = is_correct_place(PLACE_ID) if running else False
+
+image_found = image_exists("./target.png")
+
+if running and correct_place and image_found:
+    print("[+] Client running correctly.")
+
+elif running and not image_found:
+    launch_roblox(
+        PLACE_ID,
+        "Required image not detected on screen"
+    )
+    time.sleep(5)
+
+elif running and not correct_place:
+    launch_roblox(
+        PLACE_ID,
+        "Wrong place detected"
+    )
+    time.sleep(5)
+
+else:
+    launch_roblox(
+        PLACE_ID,
+        "Roblox closed"
+    )
+    time.sleep(5)
                 last_screenshot_time = time.time() # Reset timer after relaunch
                 
             time.sleep(CHECK_INTERVAL)
