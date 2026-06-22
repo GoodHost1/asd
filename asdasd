@@ -2,7 +2,7 @@ import os
 import subprocess
 import time
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageOps
 import pytesseract
 import requests
 
@@ -13,14 +13,14 @@ CHECK_INTERVAL = 10
 SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
 WEBHOOK_URL = "a"
-LAUNCH_GRACE_PERIOD = 60
+LAUNCH_GRACE_PERIOD = 30
 # ---------------------
 
+GAME_UI_KEYWORDS = ["seeds", "garden", "sell"]
 
-def speed_hub_visible():
-    """Returns True if 'Speed Hub' text is detected on screen."""
+
+def game_ui_visible():
     try:
-        # Take screenshot
         subprocess.run(
             f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/check.png",
             shell=True,
@@ -28,7 +28,6 @@ def speed_hub_visible():
             stderr=subprocess.DEVNULL,
         )
 
-        # Pull screenshot
         subprocess.run(
             f"adb -s {ADB_DEVICE} pull /sdcard/check.png ./check.png",
             shell=True,
@@ -36,20 +35,29 @@ def speed_hub_visible():
             stderr=subprocess.DEVNULL,
         )
 
-        if not os.path.exists("./check.png"):
-            return False
-
         img = Image.open("./check.png")
-        text = pytesseract.image_to_string(img)
+
+        # Crop top center where Seeds/Garden/Sell are
+        roi = img.crop((560, 60, 1500, 220))
+        roi = ImageOps.grayscale(roi)
+        text = pytesseract.image_to_string(roi).lower()
+
+        print("\n===== GAME UI OCR =====")
+        print(text)
+        print("=======================\n")
+
+        matches = 0
+        for keyword in GAME_UI_KEYWORDS:
+            if keyword in text:
+                matches += 1
+
+        print(f"[GAME UI] Found {matches}/3 keywords")
         os.remove("./check.png")
 
-        text = text.lower()
-        print(f"[OCR] Found text:\n{text}")
-
-        return "speed hub" in text
+        return matches >= 2
 
     except Exception as e:
-        print(f"[OCR Error] {e}")
+        print(f"[GAME UI OCR ERROR] {e}")
         return False
 
 
@@ -123,26 +131,25 @@ def is_correct_place(place_id):
 def launch_roblox(place_id, reason):
     send_discord_log(
         f"⚠️ {reason}. Forcing relaunch to Place ID: `{place_id}`...",
-        include_screenshot=True
+        include_screenshot=True,
     )
 
     subprocess.run(
-        f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}",
-        shell=True
+        f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}", shell=True
     )
 
     time.sleep(1)
 
     subprocess.run(
         f"adb -s {ADB_DEVICE} shell monkey -p {ROBLOX_PACKAGE} -c android.intent.category.LAUNCHER 1",
-        shell=True
+        shell=True,
     )
 
     time.sleep(3)
 
     subprocess.run(
         f'adb -s {ADB_DEVICE} shell am start -a android.intent.action.VIEW -d "roblox://placeId={place_id}" -p {ROBLOX_PACKAGE}',
-        shell=True
+        shell=True,
     )
 
     print(f"[*] Waiting {LAUNCH_GRACE_PERIOD}s for Roblox to load...")
@@ -157,37 +164,45 @@ def main():
 
     last_status_ok = None  # Tracking state changes to prevent spamming alerts
     last_screenshot_time = 0  # Tracking for the 1-minute capture rule
+    ui_failures = 0  # Moved outside loop so it increments correctly
 
     while True:
         try:
             running = is_roblox_running()
             correct_place = is_correct_place(PLACE_ID) if running else False
-            speedhub_found = speed_hub_visible()
+            ui_found = game_ui_visible() if (running and correct_place) else False
 
-            if running and correct_place and speedhub_found:
-                print("[+] Roblox running normally.")
+            if running and correct_place:
+                if ui_found:
+                    ui_failures = 0
+                    print("[+] Roblox running normally.")
+                    
+                    # Optional: Add periodic status updates here using last_screenshot_time
+                else:
+                    ui_failures += 1
+                    print(f"[!] Game UI not detected ({ui_failures}/3)")
 
-            elif running and correct_place and not speedhub_found:
-                launch_roblox(PLACE_ID, "Speed Hub text not detected")
-                time.sleep(5)
-                last_screenshot_time = time.time()  # Reset timer after relaunch
+                    if ui_failures >= 3:
+                        launch_roblox(
+                            PLACE_ID, "Game UI missing for 3 consecutive checks"
+                        )
+                        ui_failures = 0
+                        last_screenshot_time = time.time()
 
             elif running and not correct_place:
                 launch_roblox(PLACE_ID, "Wrong place detected")
+                ui_failures = 0
                 time.sleep(5)
-                last_screenshot_time = time.time()  # Reset timer after relaunch
 
             else:
                 launch_roblox(PLACE_ID, "Roblox closed")
+                ui_failures = 0
                 time.sleep(5)
-                last_screenshot_time = time.time()  # Reset timer after relaunch
 
             time.sleep(CHECK_INTERVAL)
 
         except KeyboardInterrupt:
-            send_discord_log(
-                "❌ Monitor explicitly stopped by user inside Termux."
-            )
+            send_discord_log("❌ Monitor explicitly stopped by user inside Termux.")
             break
 
 
