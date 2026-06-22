@@ -10,16 +10,26 @@ import requests
 PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
-SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
+LAUNCH_GRACE_PERIOD = 30
 ADB_DEVICE = "127.0.0.1:5555"
 WEBHOOK_URL = "a"
-LAUNCH_GRACE_PERIOD = 30
+
+# --- OCR SETTINGS ---
+OCR_CHECK_INTERVAL = 60
+OCR_FAILURE_LIMIT = 2
+OCR_KEYWORDS = [
+    "speed hub",
+    "localplayer",
+    "automatically",
+    "discord",
+    "seeds",
+    "garden",
+    "sell",
+]
 # ---------------------
 
-GAME_UI_KEYWORDS = ["seeds", "garden", "sell"]
 
-
-def game_ui_visible():
+def ui_detected():
     try:
         subprocess.run(
             f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/check.png",
@@ -37,27 +47,30 @@ def game_ui_visible():
 
         img = Image.open("./check.png")
 
-        # Crop top center where Seeds/Garden/Sell are
-        roi = img.crop((560, 60, 1500, 220))
-        roi = ImageOps.grayscale(roi)
-        text = pytesseract.image_to_string(roi).lower()
+        # grayscale full screen to catch both Game and Speed Hub UIs
+        img = ImageOps.grayscale(img)
 
-        print("\n===== GAME UI OCR =====")
+        text = pytesseract.image_to_string(img).lower()
+
+        print("\n===== OCR OUTPUT =====")
         print(text)
-        print("=======================\n")
+        print("======================\n")
 
         matches = 0
-        for keyword in GAME_UI_KEYWORDS:
+        for keyword in OCR_KEYWORDS:
             if keyword in text:
                 matches += 1
 
-        print(f"[GAME UI] Found {matches}/3 keywords")
-        os.remove("./check.png")
+        print(f"[OCR] Found {matches}/{len(OCR_KEYWORDS)} keywords")
 
-        return matches >= 2
+        if os.path.exists("./check.png"):
+            os.remove("./check.png")
+
+        # Require at least 3 matches
+        return matches >= 3
 
     except Exception as e:
-        print(f"[GAME UI OCR ERROR] {e}")
+        print(f"[OCR ERROR] {e}")
         return False
 
 
@@ -74,28 +87,23 @@ def send_discord_log(message, include_screenshot=False, is_status_update=False):
 
     try:
         if include_screenshot:
-            # 1. Take screenshot on Android device
             subprocess.run(
                 f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/roblox_snap.png",
                 shell=True,
             )
-            # 2. Pull screenshot file into Termux local directory
             subprocess.run(
                 f"adb -s {ADB_DEVICE} pull /sdcard/roblox_snap.png ./roblox_snap.png",
                 shell=True,
                 stdout=subprocess.DEVNULL,
             )
 
-            # 3. Send payload with file attachment
             if os.path.exists("./roblox_snap.png"):
                 with open("./roblox_snap.png", "rb") as f:
                     files = {"file": ("screenshot.png", f, "image/png")}
                     requests.post(WEBHOOK_URL, data=payload, files=files)
-                # Clean up local file copy
                 os.remove("./roblox_snap.png")
                 return
 
-        # Send text-only if screenshot failed or wasn't requested
         requests.post(WEBHOOK_URL, json=payload)
     except Exception as e:
         print(f"[!] Failed to send webhook payload: {e}")
@@ -162,42 +170,46 @@ def main():
         f"✅ Monitor Started Successfully!\nTargeting Game Place ID: `{PLACE_ID}`"
     )
 
-    last_status_ok = None  # Tracking state changes to prevent spamming alerts
-    last_screenshot_time = 0  # Tracking for the 1-minute capture rule
-    ui_failures = 0  # Moved outside loop so it increments correctly
+    last_ocr_check = 0
+    ocr_failures = 0
 
     while True:
         try:
             running = is_roblox_running()
             correct_place = is_correct_place(PLACE_ID) if running else False
-            ui_found = game_ui_visible() if (running and correct_place) else False
+            current_time = time.time()
 
             if running and correct_place:
-                if ui_found:
-                    ui_failures = 0
-                    print("[+] Roblox running normally.")
-                    
-                    # Optional: Add periodic status updates here using last_screenshot_time
-                else:
-                    ui_failures += 1
-                    print(f"[!] Game UI not detected ({ui_failures}/3)")
+                # Only OCR every 60 seconds
+                if current_time - last_ocr_check >= OCR_CHECK_INTERVAL:
+                    print("[*] Running OCR verification...")
 
-                    if ui_failures >= 3:
-                        launch_roblox(
-                            PLACE_ID, "Game UI missing for 3 consecutive checks"
+                    if ui_detected():
+                        ocr_failures = 0
+                        print("[+] UI verification passed.")
+                    else:
+                        ocr_failures += 1
+                        print(
+                            f"[!] OCR failed ({ocr_failures}/{OCR_FAILURE_LIMIT})"
                         )
-                        ui_failures = 0
-                        last_screenshot_time = time.time()
+
+                        if ocr_failures >= OCR_FAILURE_LIMIT:
+                            launch_roblox(
+                                PLACE_ID, "Speed Hub/Game UI not detected"
+                            )
+                            ocr_failures = 0
+
+                    last_ocr_check = current_time
 
             elif running and not correct_place:
                 launch_roblox(PLACE_ID, "Wrong place detected")
-                ui_failures = 0
-                time.sleep(5)
+                ocr_failures = 0
+                last_ocr_check = time.time()
 
             else:
                 launch_roblox(PLACE_ID, "Roblox closed")
-                ui_failures = 0
-                time.sleep(5)
+                ocr_failures = 0
+                last_ocr_check = time.time()
 
             time.sleep(CHECK_INTERVAL)
 
