@@ -1,118 +1,195 @@
+import os
 import subprocess
 import time
-import os
-import requests
 from datetime import datetime
+from PIL import Image
+import pytesseract
+import requests
 
 # --- CONFIGURATION ---
 PLACE_ID = "97598239454123"
-ROBLOX_PACKAGE = "zam.deltb"  # Target application package name
+ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
-SCREENSHOT_INTERVAL = 60      # Send status screenshot every 60s
+SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
-
-# Change "a" to your Discord Webhook URL when ready
-WEBHOOK_URL = "a" 
+WEBHOOK_URL = "a"
+LAUNCH_GRACE_PERIOD = 30
 # ---------------------
+
+
+def speed_hub_visible():
+    """Returns True if 'Speed Hub' text is detected on screen."""
+    try:
+        # Take screenshot
+        subprocess.run(
+            f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/check.png",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        # Pull screenshot
+        subprocess.run(
+            f"adb -s {ADB_DEVICE} pull /sdcard/check.png ./check.png",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        if not os.path.exists("./check.png"):
+            return False
+
+        img = Image.open("./check.png")
+        text = pytesseract.image_to_string(img)
+        os.remove("./check.png")
+
+        text = text.lower()
+        print(f"[OCR] Found text:\n{text}")
+
+        return "speed hub" in text
+
+    except Exception as e:
+        print(f"[OCR Error] {e}")
+        return False
+
 
 def send_discord_log(message, include_screenshot=False, is_status_update=False):
     """Sends a text log and an optional screenshot to the Discord Webhook."""
     print(f"[Discord Log] {message}")
-    
-    if WEBHOOK_URL == "a" or not WEBHOOK_URL.startswith("http"):
-        return
 
-    header = "📸 **Client Status Update:**" if is_status_update else "⚙️ **Monitor Alert:**"
+    header = (
+        "📸 **Roblox Live Status Update:**"
+        if is_status_update
+        else "⚙️ **Roblox Monitor Alert:**"
+    )
     payload = {"content": f"{header}\n{message}"}
-    
+
     try:
         if include_screenshot:
-            # Take screenshot on Android device
-            subprocess.run(f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/roblox_snap.png", shell=True)
-            # Pull screenshot file into local directory
-            subprocess.run(f"adb -s {ADB_DEVICE} pull /sdcard/roblox_snap.png ./roblox_snap.png", shell=True, stdout=subprocess.DEVNULL)
-            
+            # 1. Take screenshot on Android device
+            subprocess.run(
+                f"adb -s {ADB_DEVICE} shell screencap -p /sdcard/roblox_snap.png",
+                shell=True,
+            )
+            # 2. Pull screenshot file into Termux local directory
+            subprocess.run(
+                f"adb -s {ADB_DEVICE} pull /sdcard/roblox_snap.png ./roblox_snap.png",
+                shell=True,
+                stdout=subprocess.DEVNULL,
+            )
+
+            # 3. Send payload with file attachment
             if os.path.exists("./roblox_snap.png"):
                 with open("./roblox_snap.png", "rb") as f:
                     files = {"file": ("screenshot.png", f, "image/png")}
                     requests.post(WEBHOOK_URL, data=payload, files=files)
+                # Clean up local file copy
                 os.remove("./roblox_snap.png")
                 return
+
+        # Send text-only if screenshot failed or wasn't requested
         requests.post(WEBHOOK_URL, json=payload)
     except Exception as e:
         print(f"[!] Failed to send webhook payload: {e}")
 
+
 def is_roblox_running():
-    """Checks if the targeted package process exists via ADB."""
     try:
         cmd = f"adb -s {ADB_DEVICE} shell pidof {ROBLOX_PACKAGE}"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(
+            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
         return bool(result.stdout.strip())
     except Exception:
         return False
 
+
 def is_correct_place(place_id):
-    """Scans activity dump logs to check if the target place ID is in focus."""
     try:
         cmd = f"adb -s {ADB_DEVICE} shell dumpsys activity activities"
-        result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if f"placeId={place_id}" in result.stdout or f"games/{place_id}" in result.stdout:
+        result = subprocess.run(
+            cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        if (
+            f"placeId={place_id}" in result.stdout
+            or f"games/{place_id}" in result.stdout
+        ):
             return True
         return False
     except Exception:
         return False
 
+
 def launch_roblox(place_id, reason):
-    """Performs a standard intent launch sequence targeting the specific place ID."""
-    send_discord_log(f"⚠️ {reason}. Triggering launch protocol for Place ID: `{place_id}`...", include_screenshot=True)
-    
-    # Send intent to open the link explicitly inside the target package configuration
-    cmd = f'adb -s {ADB_DEVICE} shell am start -a android.intent.action.VIEW -d "roblox://placeId={place_id}" -p {ROBLOX_PACKAGE}'
-    subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    send_discord_log(
+        f"⚠️ {reason}. Forcing relaunch to Place ID: `{place_id}`...",
+        include_screenshot=True
+    )
+
+    subprocess.run(
+        f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}",
+        shell=True
+    )
+
+    time.sleep(1)
+
+    subprocess.run(
+        f"adb -s {ADB_DEVICE} shell monkey -p {ROBLOX_PACKAGE} -c android.intent.category.LAUNCHER 1",
+        shell=True
+    )
+
+    time.sleep(3)
+
+    subprocess.run(
+        f'adb -s {ADB_DEVICE} shell am start -a android.intent.action.VIEW -d "roblox://placeId={place_id}" -p {ROBLOX_PACKAGE}',
+        shell=True
+    )
+
+    print(f"[*] Waiting {LAUNCH_GRACE_PERIOD}s for Roblox to load...")
+    time.sleep(LAUNCH_GRACE_PERIOD)
+
 
 def main():
-    print(f"[*] Monitor active targeting device: {ADB_DEVICE}")
-    print(f"[*] Package: {ROBLOX_PACKAGE} | Target Place: {PLACE_ID}")
-    print("-" * 65)
-    
-    send_discord_log(f"✅ Client Monitor Online!\nTargeting Package: `{ROBLOX_PACKAGE}`\nPlace ID: `{PLACE_ID}`")
-    
-    last_status_ok = None
-    last_screenshot_time = 0
-    
+    print(f"[*] Monitoring active. Target Device: {ADB_DEVICE}")
+    send_discord_log(
+        f"✅ Monitor Started Successfully!\nTargeting Game Place ID: `{PLACE_ID}`"
+    )
+
+    last_status_ok = None  # Tracking state changes to prevent spamming alerts
+    last_screenshot_time = 0  # Tracking for the 1-minute capture rule
+
     while True:
         try:
             running = is_roblox_running()
             correct_place = is_correct_place(PLACE_ID) if running else False
-            current_time = time.time()
-            
-            if running and correct_place:
-                if last_status_ok != True:
-                    print("[+] Client process verified in correct place activity context.")
-                    last_status_ok = True
-                    last_screenshot_time = current_time 
-                
-                # Periodic 1-minute safety status updates to your Discord channel
-                if current_time - last_screenshot_time >= SCREENSHOT_INTERVAL:
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    send_discord_log(f"🟢 Application running successfully.\nTime: `{timestamp}`", include_screenshot=True, is_status_update=True)
-                    last_screenshot_time = current_time
-                    
-            elif running and not correct_place:
-                last_status_ok = False
-                launch_roblox(PLACE_ID, "Process active but target game context not identified")
-                time.sleep(5)  # Cooldown stabilization window
-                last_screenshot_time = time.time()
-            else:
-                last_status_ok = False
-                launch_roblox(PLACE_ID, "Target application process was not detected running")
+            speedhub_found = speed_hub_visible()
+
+            if running and correct_place and speedhub_found:
+                print("[+] Roblox running normally.")
+
+            elif running and correct_place and not speedhub_found:
+                launch_roblox(PLACE_ID, "Speed Hub text not detected")
                 time.sleep(5)
-                last_screenshot_time = time.time()
-                
+                last_screenshot_time = time.time()  # Reset timer after relaunch
+
+            elif running and not correct_place:
+                launch_roblox(PLACE_ID, "Wrong place detected")
+                time.sleep(5)
+                last_screenshot_time = time.time()  # Reset timer after relaunch
+
+            else:
+                launch_roblox(PLACE_ID, "Roblox closed")
+                time.sleep(5)
+                last_screenshot_time = time.time()  # Reset timer after relaunch
+
             time.sleep(CHECK_INTERVAL)
+
         except KeyboardInterrupt:
-            send_discord_log("❌ Monitor explicitly stopped by user.")
+            send_discord_log(
+                "❌ Monitor explicitly stopped by user inside Termux."
+            )
             break
+
 
 if __name__ == "__main__":
     main()
