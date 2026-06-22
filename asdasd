@@ -13,7 +13,7 @@ CHECK_INTERVAL = 10
 SCREENSHOT_INTERVAL = 60  # Send a successful screen update every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
 WEBHOOK_URL = "a"
-LAUNCH_GRACE_PERIOD = 30
+LAUNCH_GRACE_PERIOD = 60
 # ---------------------
 
 
