@@ -7,7 +7,7 @@ import pytesseract
 import requests
 
 # --- CONFIGURATION ---
-PLACE_ID = "126884695634066"
+PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"
 CHECK_INTERVAL = 10
 LAUNCH_GRACE_PERIOD = 30
