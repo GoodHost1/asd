@@ -8,7 +8,7 @@ import requests
 PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"  # Hardcoded standard game package
 USER_ID = 11083121033                # REPLACE with your numeric Roblox UserId
-CHECK_INTERVAL = 60               # Check user status every 60 seconds
+CHECK_INTERVAL = 10              # Check user status every 60 seconds
 ADB_DEVICE = "127.0.0.1:5555"
 WEBHOOK_URL = "a"                 # Replace with your Discord Webhook URL
 # ---------------------
