@@ -5,12 +5,15 @@ from datetime import datetime
 import requests
 
 # --- CONFIGURATION ---
+# --- CONFIGURATION ---
 PLACE_ID = "97598239454123"
 ROBLOX_PACKAGE = "com.roblox.client"  # Hardcoded standard game package
-USER_ID = 11083121033                # REPLACE with your numeric Roblox UserId
-CHECK_INTERVAL = 10              # Check user status every 60 seconds
+USER_ID = 11083121033                 # Your numeric Roblox UserId
+CHECK_INTERVAL = 10                   # Check status every 10 seconds (aggressive)
+FORCE_REJOIN_INTERVAL = 600           # Force re-join the game every 10 minutes (600s)
 ADB_DEVICE = "127.0.0.1:5555"
-WEBHOOK_URL = "a"                 # Replace with your Discord Webhook URL
+WEBHOOK_URL = "a"                     # Replace with your Discord Webhook URL when ready
+# ---------------------
 # ---------------------
 
 
@@ -96,6 +99,7 @@ def launch_roblox(place_id, reason):
         include_screenshot=True,
     )
 
+    # Force stop to dismiss any crash popups or freeze hangs
     subprocess.run(
         f"adb -s {ADB_DEVICE} shell am force-stop {ROBLOX_PACKAGE}", shell=True, stdout=subprocess.DEVNULL
     )
@@ -118,34 +122,47 @@ def launch_roblox(place_id, reason):
 
 
 def main():
-    print(f"[*] API Presence Monitoring active. Target Device: {ADB_DEVICE}")
-    print(f"[*] Tracking User ID: {USER_ID} | Target Package: {ROBLOX_PACKAGE}")
-    print("-" * 65)
+    print(f"[*] API Presence, Crash, & Auto-Rejoin active. Target Device: {ADB_DEVICE}")
+    print(f"[*] Tracking User ID: {USER_ID} | Force Re-join Interval: {FORCE_REJOIN_INTERVAL}s")
+    print("-" * 75)
     
     send_discord_log(
-        f"✅ Presence API Monitor Started!\nTargeting User ID: `{USER_ID}`\nPlace ID: `{PLACE_ID}`"
+        f"✅ Monitor Online!\nTargeting User ID: `{USER_ID}`\nForced re-join active every 10 minutes."
     )
 
     last_status_was_playing = None
+    last_forced_launch_time = time.time()  # Track the starting execution point
 
     while True:
         try:
-            # 1. Query online game server tracking profile
-            presence = get_player_presence(USER_ID)
-            # 2. Query local execution state
-            local_running = is_roblox_running()
-            
+            current_time = time.time()
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # 1. PRIORITY CHECK: Has 10 minutes passed since the last launch?
+            if current_time - last_forced_launch_time >= FORCE_REJOIN_INTERVAL:
+                print(f"[*] 10-minute timer reached. Triggering scheduled forced server re-join...")
+                launch_roblox(PLACE_ID, "Scheduled 10-minute automated server refresh")
+                last_forced_launch_time = current_time
+                last_status_was_playing = False
+                time.sleep(15)
+                continue
+
+            # 2. STANDARD STATE CHECKS: Check process and API status every 60 seconds
+            presence = get_player_presence(USER_ID)
+            local_running = is_roblox_running()
 
             # State check: Must be running locally AND explicitly inside a game server session (Presence Type 2)
             if local_running and presence == 2:
                 if last_status_was_playing != True:
-                    print(f"[+] Player {USER_ID} detected safely inside the game instance.")
+                    print(f"[+] Player {USER_ID} verified active inside the game.")
                     last_status_was_playing = True
                 
-                # Send standard reassurance status screenshot every check interval
+                # Calculate time remaining until next forced re-join for logs
+                time_until_rejoin = int(FORCE_REJOIN_INTERVAL - (current_time - last_forced_launch_time))
+                minutes_left = time_until_rejoin // 60
+                
                 send_discord_log(
-                    f"🟢 Account verified active inside game session.\nTime: `{timestamp}`",
+                    f"🟢 Account active inside game session.\nNext forced re-join in: `{minutes_left}m`\nTime: `{timestamp}`",
                     include_screenshot=True,
                     is_status_update=True,
                 )
@@ -153,15 +170,16 @@ def main():
                 last_status_was_playing = False
                 
                 if not local_running:
-                    reason = "Game client process completely dropped off locally"
+                    reason = "💥 Roblox crashed or process dropped off locally"
                 elif presence == 1:
-                    reason = "Client is active, but account dropped back to main menu website layer"
+                    reason = "🛑 Client active, but game disconnected to website/menu layer"
                 else:
-                    reason = "Account detected completely offline / Disconnected from server"
+                    reason = "❌ Account went offline (Silent freeze or server disconnection)"
 
-                print(f"[!] Alert: {reason}. Launching app...")
+                print(f"[!] Alert: {reason}. Re-launching app...")
                 launch_roblox(PLACE_ID, reason)
-                time.sleep(15)  # Extended launch cool-down period
+                last_forced_launch_time = time.time()  # Reset the 10-min clock since we had to force-open it anyway
+                time.sleep(15)
 
             time.sleep(CHECK_INTERVAL)
 
